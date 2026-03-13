@@ -1,11 +1,11 @@
 import requests
 import pandas as pd
-from functools import reduce
 import plotly.express as px
 
 CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
             "0000078003","0000037996","0001467858","0000068505","0000037996",
-            "0000018230","0000030625","0000104169","0001834585"]
+            "0000018230","0000030625","0000104169","0001048911","0000200406",
+            "0001637459","0000315189","0000040545","0000012927","0000051143"]
 
 #listas de nomes alternativos que alguns conceitos contábeis podem assumir
 revenue_tags = [
