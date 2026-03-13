@@ -1,8 +1,11 @@
 import requests
 import pandas as pd
 from functools import reduce
+import plotly.express as px
 
-CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088","0000078003","0000037996","0001467858"]
+CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
+            "0000078003","0000037996","0001467858","0000068505","0000037996",
+            "0000018230","0000030625","0000104169","0001834585"]
 
 #listas de nomes alternativos que alguns conceitos contábeis podem assumir
 revenue_tags = [
@@ -159,7 +162,6 @@ def data_consolidada(atributo,tag_list):
         )
 
         df_atributo['entity'] = entity_name
-        # df_atributo['entity'] = df_atributo['entity'].str.title()
         df_atributo = df_atributo[['entity','year',atributo]]
         
         df_atributo = (
@@ -205,22 +207,24 @@ df_atributo_unificado = (
     .reset_index()
 )
 
-#criação de colunas com métricas calculadas indiretamente e margens
+#criação de colunas com métricas calculadas indiretamente
 df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'].fillna(0) - df_atributo_unificado['COGS'].fillna(0)),2)
+df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
+
+#Criação de colunas com margens
+df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
 
 df_atributo_unificado['GrossMargin'] = round(100*(
     df_atributo_unificado['GrossProfit']
         .combine_first(df_atributo_unificado['CalcProfit'])
         .div(df_atributo_unificado['Revenue'])
 ),2)
-
-df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
-df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
 df_atributo_unificado['NetIncomeMargin'] = round(100*(df_atributo_unificado['NetIncome']/df_atributo_unificado['Revenue']),2)
+df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificado['OperatingIncome']/df_atributo_unificado['Revenue']),2)
 
-
+#formatação dos dados e DataFrame
 df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
 df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
 
 print(df_atributo_unificado)
-df_atributo_unificado.to_excel('output.xlsx')
+
