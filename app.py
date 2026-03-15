@@ -1,6 +1,12 @@
 import requests
 import pandas as pd
 import plotly.express as px
+import streamlit as st
+from datetime import date
+import time
+
+## Título da página,layout
+st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
 
 CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
             "0000078003","0000037996","0001467858","0000068505","0000037996",
@@ -68,15 +74,26 @@ sga_tags = ['SellingGeneralAndAdministrativeExpenses']
 rd_tags = ['ResearchAndDevelopmentExpense']
 ooe_tags = ['OtherOperatingExpenses']
 
+@st.cache_data
+@st.cache_data(ttl=86400)
 def download_companyfacts(CIK_list):
 
     headers = {"User-Agent": "henriquecuryboaro hcboaro@gmail.com"}
     company_data = {}
 
     for cik in CIK_list:
+
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        response = requests.get(url, headers=headers)
-        company_data[cik] = response.json()
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            company_data[cik] = response.json()
+
+        except requests.exceptions.RequestException:
+            company_data[cik] = None
+
+        time.sleep(0.2)
 
     return company_data
 
@@ -87,6 +104,7 @@ for cik, data in company_data.items():
     entity_name = data['entityName']
     us_gaap = data['facts']['us-gaap']
 
+@st.cache_data
 def df_completo(demonstracao, metric_name, entity_name):
 
     if demonstracao is None or len(demonstracao) == 0:
@@ -124,6 +142,7 @@ def df_completo(demonstracao, metric_name, entity_name):
     return df[["entity", "year", metric_name]]
 
 #Função generalizadora:
+@st.cache_data
 def data_consolidada(atributo,tag_list):
     dfs_organisations = []
     for cik,data in company_data.items():        
@@ -177,6 +196,34 @@ def data_consolidada(atributo,tag_list):
 
     return data_geral
 
+@st.cache_data
+def variavel_agreg_periodo(empresa,variavel,inicio,fim):
+    ano_inicio = pd.to_datetime(inicio).year
+    ano_fim = pd.to_datetime(fim).year
+    filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= ano_inicio) & 
+                                            (df_atributo_unificado['year'] <= ano_fim)]
+    filtro_temporal = filtro_temporal[variavel]
+
+    return round(filtro_temporal.sum(skipna=True),2)
+
+@st.cache_data
+def atributo_anual_plotbar(empresa,atributo):
+    # ano_inicio = pd.to_datetime(inicio).year
+    # ano_fim = pd.to_datetime(fim).year
+    data_empresa = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= 2008) & 
+                                            (df_atributo_unificado['year'] <= 2026)]
+
+    if data_empresa.empty:
+        st.info("Selecione dados no menu de navegação ao lado para que indicadores sejam exibidos")
+        return None
+
+    max_value = max(data_empresa[atributo])
+    fig = px.bar(data_empresa, x='year',y=atributo, range_y=[(0.5*max_value),(1.05*max_value)], labels={'year':'ano'})
+    
+    fig.update_layout(yaxis=dict(title=f'{atributo} por ano fiscal',tickprefix="US$", tickformat=",.2f"), title_text=f'Valores anuais de {atributo}')
+
+    return fig
+
 
 #lista com todos atributos para junção em df unificado
 dfs_atributos_consolidados = []
@@ -226,5 +273,66 @@ df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificad
 df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
 df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
 
-print(df_atributo_unificado)
+#geração de lista de empresas
+companies_list = df_atributo_unificado['entity'].unique().tolist()
+
+def main():
+
+    st.write('## Painel de informações financeiras de empresas listadas nos EUA')
+    empresa_escolhida = st.sidebar.selectbox('Escolha a empresa',sorted(companies_list), index=None, placeholder='Empresas', key=f'empresa')
+    inicio = st.sidebar.date_input('### Início da série', min_value=date(2010, 1, 1), max_value=date(2026, 1, 31))
+    fim = st.sidebar.date_input('### Fim da série', min_value=date(2010, 1, 1), max_value=date(2026, 1, 31))
+    agg_revenue = round(variavel_agreg_periodo(empresa_escolhida,'Revenue',inicio,fim)/1E9,2)
+    agg_GrossProfit = round(variavel_agreg_periodo(empresa_escolhida,'CalcProfit',inicio,fim)/1E9,2)
+    agg_OpIncome = round(variavel_agreg_periodo(empresa_escolhida,'OperatingIncome',inicio,fim)/1E9,2)
+    agg_EBITDA = round(variavel_agreg_periodo(empresa_escolhida,'EBITDA',inicio,fim)/1E9,2)
+    agg_NetIncome = round(variavel_agreg_periodo(empresa_escolhida,'NetIncome',inicio,fim)/1E9,2)
+
+    col1,col2 = st.columns(2)
+    with col1.container(border=True):
+
+        st.markdown(
+            """
+            <style>
+            .centered-text {
+                text-align: center;
+                font-size: 28px;
+            }
+            </style>
+            <div class="centered-text">
+                Indicadores acumulados<br>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+        a,b = st.columns(2)
+        c,d = st.columns(2)
+        a.metric(label=f'Receita (em bilhões)', value=f'US${agg_revenue}', border=True)
+        b.metric(label=f'Lucro bruto (em bilhões)', value=f'US${agg_GrossProfit}', border=True)
+        c.metric(label=f'Lurco operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
+        d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
+        st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
+        fig_receita = atributo_anual_plotbar(empresa_escolhida,'Revenue')
+        st.plotly_chart(fig_receita)
+
+    with col2.container(border=True):
+        st.markdown(
+            """
+            <style>
+            .centered-text {
+                text-align: center;
+                font-size: 28px;
+            }
+            </style>
+            <div class="centered-text">
+                Margens<br>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+if __name__ == "__main__":
+    main()
 
