@@ -73,6 +73,12 @@ opex_tags = [ 'OperatingExpenses',
 sga_tags = ['SellingGeneralAndAdministrativeExpenses']
 rd_tags = ['ResearchAndDevelopmentExpense']
 ooe_tags = ['OtherOperatingExpenses']
+incometax_tags = ['IncomeTaxExpenseBenefit']
+pretax_tags = ['IncomeLossFromContinuingOperationsBeforeIncomeTaxes']
+short_term_tags = ['ShortTermBorrowings']
+long_term_tags = ['LongTermDebt']
+equity_tags = ['StockholdersEquity']
+cash_tags = ['CashAndCashEquivalentsAtCarryingValue']
 
 @st.cache_data
 @st.cache_data(ttl=86400)
@@ -198,18 +204,25 @@ def data_consolidada(atributo,tag_list):
 
 @st.cache_data
 def variavel_agreg_periodo(empresa,variavel,inicio,fim):
-    ano_inicio = pd.to_datetime(inicio).year
-    ano_fim = pd.to_datetime(fim).year
-    filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= ano_inicio) & 
-                                            (df_atributo_unificado['year'] <= ano_fim)]
+
+    filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= inicio) & 
+                                            (df_atributo_unificado['year'] <= fim)]
     filtro_temporal = filtro_temporal[variavel]
 
     return round(filtro_temporal.sum(skipna=True),2)
 
 @st.cache_data
-def atributo_anual_plotbar(empresa,atributo):
-    # ano_inicio = pd.to_datetime(inicio).year
-    # ano_fim = pd.to_datetime(fim).year
+def variavel_media(empresa,variavel,inicio,fim):
+
+    filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= inicio) & 
+                                            (df_atributo_unificado['year'] <= fim)]
+    filtro_temporal = filtro_temporal[variavel]
+
+    return round(filtro_temporal.mean(skipna=True),2)
+
+@st.cache_data
+def atributo_anual_plotbar(empresa,atributo,texto_atributo):
+
     data_empresa = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= 2008) & 
                                             (df_atributo_unificado['year'] <= 2026)]
 
@@ -217,16 +230,36 @@ def atributo_anual_plotbar(empresa,atributo):
         st.info("Selecione dados no menu de navegação ao lado para que indicadores sejam exibidos")
         return None
 
-    max_value = max(data_empresa[atributo])
-    fig = px.bar(data_empresa, x='year',y=atributo, range_y=[(0.5*max_value),(1.05*max_value)], labels={'year':'ano'})
+    # max_value = max(data_empresa[atributo])
+    fig = px.line(data_empresa, x='year',y=atributo, labels={'year':'ano'})
     
-    fig.update_layout(yaxis=dict(title=f'{atributo} por ano fiscal',tickprefix="US$", tickformat=",.2f"), title_text=f'Valores anuais de {atributo}')
+    fig.update_layout(yaxis=dict(title=f'{texto_atributo} por ano fiscal', tickformat=",.2f"), title_text=f'Valores anuais de {texto_atributo}')
 
     return fig
 
 
 #lista com todos atributos para junção em df unificado
 dfs_atributos_consolidados = []
+
+metricas_pt = {
+    'Receita': 'Revenue',
+    'Lucro operacional': 'OperatingIncome',
+    'Lucro líquido': 'NetIncome',
+    'Depreciação e amortização': 'DepreciationAmortization',
+    'Lucro bruto': 'CalcProfit',
+    'COGS': 'COGS',
+    'Juros': 'Interest',
+    'Impostos': 'Taxes',
+    'Estoque': 'Inventory',
+    'Despesas operacionais': 'Opex',
+    'Investimento em P&D': 'RnD',
+    'Margem EBITDA': 'EBITDAMargin',
+    'Margem de lucro líquido': 'NetIncomeMargin',
+    'Margem de lucro operacional': 'OperatingIncomeMargin',
+    'Margem de lucro bruto': 'GrossMargin',
+    'EBITDA':'EBITDA'
+}
+
 
 metricas = {
     'Revenue': revenue_tags,
@@ -239,7 +272,13 @@ metricas = {
     'Taxes': tax_tags,
     'Inventory': inventory_tags,
     'Opex': opex_tags,
-    'RnD': rd_tags
+    'RnD': rd_tags,
+    # 'IncomeTax': incometax_tags,
+    # 'Pretax': pretax_tags,
+    # 'ShortTermDebt': short_term_tags,
+    # 'LongTermDebt': long_term_tags,
+    # 'Equity': equity_tags,
+    # 'Cash': cash_tags
 }
 
 for atributo,tags in metricas.items():
@@ -276,17 +315,24 @@ df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
 #geração de lista de empresas
 companies_list = df_atributo_unificado['entity'].unique().tolist()
 
+df_atributo_unificado.to_excel('output.xlsx')
+
 def main():
 
     st.write('## Painel de informações financeiras de empresas listadas nos EUA')
     empresa_escolhida = st.sidebar.selectbox('Escolha a empresa',sorted(companies_list), index=None, placeholder='Empresas', key=f'empresa')
-    inicio = st.sidebar.date_input('### Início da série', min_value=date(2010, 1, 1), max_value=date(2026, 1, 31))
-    fim = st.sidebar.date_input('### Fim da série', min_value=date(2010, 1, 1), max_value=date(2026, 1, 31))
+    inicio = st.sidebar.selectbox('### Início da série', list(range(2008,2026)))
+    fim = st.sidebar.selectbox('### Fim da série', list(range(2008,2026)))
     agg_revenue = round(variavel_agreg_periodo(empresa_escolhida,'Revenue',inicio,fim)/1E9,2)
     agg_GrossProfit = round(variavel_agreg_periodo(empresa_escolhida,'CalcProfit',inicio,fim)/1E9,2)
     agg_OpIncome = round(variavel_agreg_periodo(empresa_escolhida,'OperatingIncome',inicio,fim)/1E9,2)
     agg_EBITDA = round(variavel_agreg_periodo(empresa_escolhida,'EBITDA',inicio,fim)/1E9,2)
     agg_NetIncome = round(variavel_agreg_periodo(empresa_escolhida,'NetIncome',inicio,fim)/1E9,2)
+
+    media_margem_lucrobruto = round(variavel_media(empresa_escolhida,'GrossMargin',inicio,fim),2)
+    media_margem_operacional = round(variavel_media(empresa_escolhida,'OperatingIncomeMargin',inicio,fim),2)
+    media_margem_ebitda = round(variavel_media(empresa_escolhida,'EBITDAMargin',inicio,fim),2)
+    media_margem_lucroliquido = round(variavel_media(empresa_escolhida,'NetIncomeMargin',inicio,fim),2)
 
     col1,col2 = st.columns(2)
     with col1.container(border=True):
@@ -314,8 +360,13 @@ def main():
         c.metric(label=f'Lurco operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
         d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
         st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
-        fig_receita = atributo_anual_plotbar(empresa_escolhida,'Revenue')
-        st.plotly_chart(fig_receita)
+        metric = st.selectbox('Métricas para séries temporais',sorted(metricas_pt.keys()), index=None, placeholder='Métricas', key=f'metrica')
+        try:
+            metrica_anual = metricas_pt[metric]
+            fig_receita = atributo_anual_plotbar(empresa_escolhida,metrica_anual,metric)
+            st.plotly_chart(fig_receita)
+        except:
+            pass
 
     with col2.container(border=True):
         st.markdown(
@@ -332,6 +383,14 @@ def main():
             """,
             unsafe_allow_html=True
         )
+
+        e,f = st.columns(2)
+        g,h = st.columns(2)
+
+        e.metric(label=f'Margem de lucro bruto', value=f'{media_margem_lucrobruto}%', border=True)
+        f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
+        g.metric(label=f'Margem de EBITDA', value=f'{media_margem_ebitda}%', border=True)
+        h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)
 
 if __name__ == "__main__":
     main()
