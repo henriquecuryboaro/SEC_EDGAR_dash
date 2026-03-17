@@ -1,9 +1,11 @@
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from datetime import date
 import time
+
 
 ## Título da página,layout
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
@@ -74,11 +76,30 @@ sga_tags = ['SellingGeneralAndAdministrativeExpenses']
 rd_tags = ['ResearchAndDevelopmentExpense']
 ooe_tags = ['OtherOperatingExpenses']
 incometax_tags = ['IncomeTaxExpenseBenefit']
-pretax_tags = ['IncomeLossFromContinuingOperationsBeforeIncomeTaxes']
+pretax_tags = [
+    'IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+    'IncomeBeforeIncomeTaxes',
+    'PretaxIncome',
+    'IncomeLossBeforeIncomeTaxes',
+    'EarningsBeforeIncomeTaxes'
+]
 short_term_tags = ['ShortTermBorrowings']
 long_term_tags = ['LongTermDebt']
 equity_tags = ['StockholdersEquity']
-cash_tags = ['CashAndCashEquivalentsAtCarryingValue']
+cash_tags = [
+    'CashAndCashEquivalentsAtCarryingValue',
+    'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
+    'Cash'
+]
+
+assets_tags = [
+    'Assets'
+]
+
+current_liabilities_tags = [
+    'LiabilitiesCurrent',
+    'CurrentLiabilities'
+]
 
 @st.cache_data
 @st.cache_data(ttl=86400)
@@ -273,15 +294,18 @@ metricas = {
     'Inventory': inventory_tags,
     'Opex': opex_tags,
     'RnD': rd_tags,
-    # 'IncomeTax': incometax_tags,
-    # 'Pretax': pretax_tags,
-    # 'ShortTermDebt': short_term_tags,
-    # 'LongTermDebt': long_term_tags,
-    # 'Equity': equity_tags,
-    # 'Cash': cash_tags
+    'IncomeTax': incometax_tags,
+    'ShortTermDebt': short_term_tags,
+    'LongTermDebt': long_term_tags,
+    'Equity': equity_tags,
+    'Cash': cash_tags,
+    'Assets': assets_tags,
+    'CurrentLiabilities': current_liabilities_tags
+
 }
 
 for atributo,tags in metricas.items():
+    print("Processando:", atributo)
     df = data_consolidada(atributo,tags)
     dfs_atributos_consolidados.append(df)
 
@@ -296,6 +320,11 @@ df_atributo_unificado = (
 #criação de colunas com métricas calculadas indiretamente
 df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'].fillna(0) - df_atributo_unificado['COGS'].fillna(0)),2)
 df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
+df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
+df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
+df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
+df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+
 
 #Criação de colunas com margens
 df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
@@ -391,6 +420,22 @@ def main():
         f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
         g.metric(label=f'Margem de EBITDA', value=f'{media_margem_ebitda}%', border=True)
         h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)
+
+        roic_medio = round(100*variavel_media(empresa_escolhida,'ROIC',inicio,fim),2)
+        fig_roic = go.Figure(go.Indicator(
+                        mode = "gauge+number",
+                        value = roic_medio,
+                        gauge = {"axis": {"range":[0,100]}},
+                        title = {'text': "ROIC Médio (%)"}))
+                
+        fig_roic.update_layout(
+                        autosize=False,
+                        width=540, 
+                        height=360, 
+                        margin=dict(l=50, r=50, b=100, t=100, pad=4)
+                    )
+        
+        st.plotly_chart(fig_roic)
 
 if __name__ == "__main__":
     main()
