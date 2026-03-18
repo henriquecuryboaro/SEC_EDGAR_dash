@@ -278,7 +278,10 @@ metricas_pt = {
     'Margem de lucro líquido': 'NetIncomeMargin',
     'Margem de lucro operacional': 'OperatingIncomeMargin',
     'Margem de lucro bruto': 'GrossMargin',
-    'EBITDA':'EBITDA'
+    'EBITDA':'EBITDA',
+    'ROIC':'ROIC',
+    'EVA':'EVA',
+    'WACC':'WACC'
 }
 
 
@@ -325,6 +328,28 @@ df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_
 df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
 df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
 
+#Criação de atribuitos e tratativa de NaN para calcular WACC e EVA
+df_atributo_unificado['E_D'] = (df_atributo_unificado['Equity']/(df_atributo_unificado['ShortTermDebt']+df_atributo_unificado['LongTermDebt']+df_atributo_unificado['Equity']))
+weight_equity = df_atributo_unificado['E_D'].median()
+df_atributo_unificado['E_D'] = df_atributo_unificado['E_D'].where(
+    df_atributo_unificado['E_D'] > 0,
+    weight_equity
+)
+
+df_atributo_unificado['Cost_of_Equity'] = 0.08
+df_atributo_unificado['Rd'] = df_atributo_unificado['Interest']/(df_atributo_unificado['ShortTermDebt'] + df_atributo_unificado['LongTermDebt'])
+df_atributo_unificado['Rd'] = df_atributo_unificado['Rd'].where(
+    df_atributo_unificado['Rd'] > 0,
+    0.05
+)
+
+df_atributo_unificado['TaxRate'] = df_atributo_unificado['TaxRate'].where(
+    ((df_atributo_unificado['TaxRate'] >= 0) & (df_atributo_unificado['TaxRate'] < 1)),
+    0.25
+)
+
+df_atributo_unificado['WACC'] = df_atributo_unificado['E_D']*df_atributo_unificado['Cost_of_Equity'] + df_atributo_unificado['E_D']*df_atributo_unificado['Rd']*(1 - df_atributo_unificado['TaxRate'])
+df_atributo_unificado['EVA'] = (df_atributo_unificado['ROIC'] - df_atributo_unificado['WACC'])*(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
 
 #Criação de colunas com margens
 df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
@@ -407,7 +432,7 @@ def main():
             }
             </style>
             <div class="centered-text">
-                Margens<br>
+                Margens (valores médios para o período)<br>
             </div>
             """,
             unsafe_allow_html=True
@@ -422,6 +447,7 @@ def main():
         h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)
 
         roic_medio = round(100*variavel_media(empresa_escolhida,'ROIC',inicio,fim),2)
+        eva_medio = round(variavel_media(empresa_escolhida,'EVA',inicio,fim)/1E9,2)
         fig_roic = go.Figure(go.Indicator(
                         mode = "gauge+number",
                         value = roic_medio,
@@ -435,7 +461,9 @@ def main():
                         margin=dict(l=50, r=50, b=100, t=100, pad=4)
                     )
         
+
         st.plotly_chart(fig_roic)
+        st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f'US${eva_medio}', border=True)
 
 if __name__ == "__main__":
     main()
