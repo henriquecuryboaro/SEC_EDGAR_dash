@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from datetime import date
 import time
-
+from concurrent.futures import ThreadPoolExecutor
 
 ## Título da página,layout
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
@@ -13,7 +13,8 @@ st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",lay
 CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
             "0000078003","0000037996","0001467858","0000068505","0000037996",
             "0000018230","0000030625","0000104169","0001048911","0000200406",
-            "0001637459","0000315189","0000040545","0000012927","0000051143"]
+            "0001637459","0000315189","0000040545","0000012927","0000051143",
+            "0001571996","0000789019","0001318605"]
 
 #listas de nomes alternativos que alguns conceitos contábeis podem assumir
 revenue_tags = [
@@ -101,32 +102,32 @@ current_liabilities_tags = [
     'CurrentLiabilities'
 ]
 
-@st.cache_data
+def fetch_cik_data(cik, headers):
+    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        return cik, response.json()
+    except Exception as e:
+        return cik, None
+
 @st.cache_data(ttl=86400)
-def download_companyfacts(CIK_list):
-
-    headers = {"User-Agent": "henriquecuryboaro hcboaro@gmail.com"}
+def download_companyfacts_parallel(CIK_list):
+    headers = {"User-Agent": "henriquecuryboar hcboaro@gmail.com"}
     company_data = {}
-
-    for cik in CIK_list:
-
-        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-
-        try:
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            company_data[cik] = response.json()
-
-        except requests.exceptions.RequestException:
-            company_data[cik] = None
-
-        time.sleep(0.2)
-
+    
+    with ThreadPoolExecutor(max_workers=7) as executor:
+        results = executor.map(lambda cik: fetch_cik_data(cik, headers), CIK_list)
+    
+    for cik, data in results:
+        company_data[cik] = data
     return company_data
 
-company_data = download_companyfacts(CIK_list)
+company_data = download_companyfacts_parallel(CIK_list)
 
 for cik, data in company_data.items():
+    if data is None:
+        continue
 
     entity_name = data['entityName']
     us_gaap = data['facts']['us-gaap']
@@ -172,7 +173,10 @@ def df_completo(demonstracao, metric_name, entity_name):
 @st.cache_data
 def data_consolidada(atributo,tag_list):
     dfs_organisations = []
-    for cik,data in company_data.items():        
+    for cik,data in company_data.items():
+        if data is None:
+            continue
+                
         entity_name = data['entityName']
         us_gaap = data['facts']['us-gaap']
 
@@ -308,7 +312,6 @@ metricas = {
 }
 
 for atributo,tags in metricas.items():
-    print("Processando:", atributo)
     df = data_consolidada(atributo,tags)
     dfs_atributos_consolidados.append(df)
 
