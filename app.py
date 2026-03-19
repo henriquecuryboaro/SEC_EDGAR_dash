@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
 
 CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
-            "0000078003","0000037996","0001467858","0000068505","0000037996",
+            "0000078003","0000037996","0001467858","0000068505",
             "0000018230","0000030625","0000104169","0001048911","0000200406",
             "0001637459","0000315189","0000040545","0000012927","0000051143",
             "0001571996","0000789019","0001318605"]
@@ -107,7 +107,11 @@ def fetch_cik_data(cik, headers):
     try:
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
-        return cik, response.json()
+        return cik, {"entityName": response.json().get("entityName"),
+                    "facts": {
+                        "us-gaap": response.json().get("facts", {}).get("us-gaap", {})
+                    }
+                    }
     except Exception as e:
         return cik, None
 
@@ -116,7 +120,7 @@ def download_companyfacts_parallel(CIK_list):
     headers = {"User-Agent": "henriquecuryboar hcboaro@gmail.com"}
     company_data = {}
     
-    with ThreadPoolExecutor(max_workers=7) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         results = executor.map(lambda cik: fetch_cik_data(cik, headers), CIK_list)
     
     for cik, data in results:
@@ -132,16 +136,18 @@ for cik, data in company_data.items():
     entity_name = data['entityName']
     us_gaap = data['facts']['us-gaap']
 
-@st.cache_data
+
+@st.cache_data(ttl=3600, max_entries=10)
 def df_completo(demonstracao, metric_name, entity_name):
 
     if demonstracao is None or len(demonstracao) == 0:
         return None
 
-    df = pd.DataFrame(demonstracao)
+    cols_necessarias = ["end", "val", "fp", "form", "filed", "start"]
+    df = pd.DataFrame(demonstracao)[[c for c in cols_necessarias if c in demonstracao[0]]]
 
     # filtra apenas FY e 10-K
-    df = df[(df["fp"] == "FY") & (df["form"] == "10-K")].copy()
+    df = df[(df["fp"] == "FY") & (df["form"] == "10-K")]
 
     if df.empty:
         return None
@@ -155,7 +161,6 @@ def df_completo(demonstracao, metric_name, entity_name):
 
         df["interval"] = (df["end"] - df["start"]).dt.days
 
-        df = df[df["interval"] > 300].copy()
 
     df["entity"] = entity_name
     df["year"] = df["end"].dt.year
@@ -170,7 +175,7 @@ def df_completo(demonstracao, metric_name, entity_name):
     return df[["entity", "year", metric_name]]
 
 #Função generalizadora:
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=10)
 def data_consolidada(atributo,tag_list):
     dfs_organisations = []
     for cik,data in company_data.items():
@@ -179,6 +184,10 @@ def data_consolidada(atributo,tag_list):
                 
         entity_name = data['entityName']
         us_gaap = data['facts']['us-gaap']
+        us_gaap = {
+                    k: v for k, v in data['facts']['us-gaap'].items()
+                    if k in tag_list
+                }
 
         dfs = []
         for tag in tag_list:
@@ -227,7 +236,7 @@ def data_consolidada(atributo,tag_list):
 
     return data_geral
 
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=10)
 def variavel_agreg_periodo(empresa,variavel,inicio,fim):
 
     filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= inicio) & 
@@ -236,7 +245,7 @@ def variavel_agreg_periodo(empresa,variavel,inicio,fim):
 
     return round(filtro_temporal.sum(skipna=True),2)
 
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=10)
 def variavel_media(empresa,variavel,inicio,fim):
 
     filtro_temporal = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= inicio) & 
@@ -245,7 +254,7 @@ def variavel_media(empresa,variavel,inicio,fim):
 
     return round(filtro_temporal.mean(skipna=True),2)
 
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=10)
 def atributo_anual_plotbar(empresa,atributo,texto_atributo):
 
     data_empresa = df_atributo_unificado[(df_atributo_unificado['entity'] == empresa) & (df_atributo_unificado['year'] >= 2008) & 
@@ -322,6 +331,11 @@ df_atributo_unificado = (
     )
     .reset_index()
 )
+
+df_atributo_unificado = df_atributo_unificado.astype({
+    col: 'float32'
+    for col in df_atributo_unificado.select_dtypes('float').columns
+})
 
 #criação de colunas com métricas calculadas indiretamente
 df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'].fillna(0) - df_atributo_unificado['COGS'].fillna(0)),2)
