@@ -6,6 +6,7 @@ import streamlit as st
 from datetime import date
 import time
 from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
 ## Título da página,layout
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
@@ -383,10 +384,14 @@ df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificad
 df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
 df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
 
+num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
+numeric_features = num_cols.tolist()
+df_atributo_unificado[numeric_features] = df_atributo_unificado[numeric_features].astype('float64')
+
 #geração de lista de empresas
 companies_list = df_atributo_unificado['entity'].unique().tolist()
 
-df_atributo_unificado.to_excel('output.xlsx')
+
 
 def main():
 
