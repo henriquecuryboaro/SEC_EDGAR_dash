@@ -162,6 +162,7 @@ def df_completo(demonstracao, metric_name, entity_name):
 
         df["interval"] = (df["end"] - df["start"]).dt.days
 
+        df = df[df["interval"] > 300]
 
     df["entity"] = entity_name
     df["year"] = df["end"].dt.year
