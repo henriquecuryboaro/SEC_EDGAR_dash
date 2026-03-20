@@ -5,3 +5,4 @@ streamlit>=1.24.0
 altair<5
 pyarrow
 openpyxl
+numpy=2.2.6
