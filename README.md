@@ -41,19 +41,3 @@ Além disso, é possível visualizar a evolução temporal dos indicadores finan
 ![Visualização de dados no painel](/tela_principal.png "Informaçõs do painel de natureza operacional")
 
 
-## Conclusões
-
-O objetivo do acesso *on-line* ao painel é permitir ao usuário navegar pelos dados de forma interativa, gerando seus próprios *insights*, mas algumas observações interessantes podem ser destacadas:
-
-* Os dados tratam de operações envolvendo indústrias dos segmentos de polímeros, agroquímica e gases industriais
-* A análise de valor de mercado foi realizada com o emprego do método dos múltiplios EV/EBITDA, considerando valores típicos para as estimativas de mercado (sete e dez múltiplos). A referência consultada pode ser encontrada [aqui](https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datacurrent.html).
-* Nota-se um valor maior do indicador de **produção por empregado** na planta que representa o setor de gases industriais, ilustrando um caso de operação pouco **trabalho-intensiva** em comparação com os demais ativos
-* O ativo representativo do setor de gases industriais também apresenta um indicador de *performance*, dentro da avaliação de OEE, em patamar bastante elevado, o que é coerente com a observação de produtividade por empregado feita acima.
-* Ainda, estes indicadores apresentados poderiam levar a considerações sobre implementações de mais metodologias de automação (especialmente em setores com indicadores relativamente mais baixos de produtividade)
-
-## Projetos futuros
-
-A conclusão deste painel oferece uma oportunidade para avaliação de indicadores operacionais de forma simples e intuitiva, destacando-se a possibilidade de comparações entre diferentes setores.
-
-Como possibilidade de futuros desenvolvimentos, considera-se a possibilidade de aplicação de modelo preditivo para a obtenção de valores de EBITDA em função de indicadores como OEE ou outras variáveis, visto que este indicador financeiro é um dos mais relevantes para a avaliação da saúde financeira de um empreendimento.
-
