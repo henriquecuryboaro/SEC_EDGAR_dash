@@ -341,7 +341,7 @@ df_atributo_unificado = df_atributo_unificado.astype({
 
 #criação de colunas com métricas calculadas indiretamente
 df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
-df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome']+df_atributo_unificado['Interest']+df_atributo_unificado['Taxes']+df_atributo_unificado['DepreciationAmortization']),2)
+df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
 df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
 df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
 df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
