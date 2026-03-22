@@ -340,7 +340,7 @@ df_atributo_unificado = df_atributo_unificado.astype({
 })
 
 #criação de colunas com métricas calculadas indiretamente
-df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'].fillna(0) - df_atributo_unificado['COGS'].fillna(0)),2)
+df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
 df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
 df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
 df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
@@ -397,6 +397,8 @@ companies_list = df_atributo_unificado['entity'].unique().tolist()
 def main():
 
     st.write('## Painel de informações financeiras de empresas listadas nos EUA')
+    st.write('### Selecione dados no menu de navegação à esquerda. Caso nenhum valor seja exibido, isso significa que não há dados disponíveis para os filtros aplicados')
+    st.write('#### Fonte dos dados: Securities and Exchange Commission - SEC') 
     empresa_escolhida = st.sidebar.selectbox('Escolha a empresa',sorted(companies_list), index=None, placeholder='Empresas', key=f'empresa')
     inicio = st.sidebar.selectbox('### Início da série', list(range(2008,2026)))
     fim = st.sidebar.selectbox('### Fim da série', list(range(2008,2026)))
@@ -432,11 +434,27 @@ def main():
 
         a,b = st.columns(2)
         c,d = st.columns(2)
-        a.metric(label=f'Receita (em bilhões)', value=f'US${agg_revenue}', border=True)
-        b.metric(label=f'Lucro bruto (em bilhões)', value=f'US${agg_GrossProfit}', border=True)
-        c.metric(label=f'Lurco operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
-        d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
-        st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
+        if (pd.isna(agg_revenue) or agg_revenue == 0):
+            a.metric(label=f'Receita (em bilhões)', value=f' - ', border=True)
+        else:
+            a.metric(label=f'Receita (em bilhões)', value=f'US${agg_revenue}', border=True)
+        if (pd.isna(agg_GrossProfit) or agg_revenue == 0):
+            b.metric(label=f'Lucro bruto (em bilhões)', value=f' - ', border=True)
+        else:
+            b.metric(label=f'Lucro bruto (em bilhões)', value=f'US${agg_GrossProfit}', border=True)
+        if (pd.isna(agg_OpIncome) or agg_revenue == 0):
+            c.metric(label=f'Lucro operacional (em bilhões)', value=f' - ', border=True)
+        else:
+            c.metric(label=f'Lucro operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
+        if (pd.isna(agg_EBITDA) or agg_revenue == 0):
+            d.metric(label=f'EBITDA (em bilhões)', value=f' - ', border=True)
+        else:
+            d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
+        if (pd.isna(agg_NetIncome) or agg_revenue == 0):
+            st.metric(label=f'Lucro líquido (em bilhões)', value=f' - ', border=True)
+        else:
+            st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
+
         metric = st.selectbox('Métricas para séries temporais',sorted(metricas_pt.keys()), index=None, placeholder='Métricas', key=f'metrica')
         try:
             metrica_anual = metricas_pt[metric]
@@ -464,10 +482,22 @@ def main():
         e,f = st.columns(2)
         g,h = st.columns(2)
 
-        e.metric(label=f'Margem de lucro bruto', value=f'{media_margem_lucrobruto}%', border=True)
-        f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
-        g.metric(label=f'Margem de EBITDA', value=f'{media_margem_ebitda}%', border=True)
-        h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)
+        if pd.isna(media_margem_lucrobruto):
+            e.metric(label=f'Margem de lucro bruto', value=f' - ', border=True)
+        else:
+            e.metric(label=f'Margem de lucro bruto', value=f'{media_margem_lucrobruto}%', border=True)
+        if pd.isna(media_margem_operacional):
+            f.metric(label=f'Margem de lucro operacional', value=f' - ', border=True)
+        else:
+            f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
+        if pd.isna(media_margem_ebitda):
+            g.metric(label=f'Margem EBITDA', value=f' - ', border=True)
+        else:
+            g.metric(label=f'Margem EBITDA', value=f'{media_margem_ebitda}%', border=True)
+        if pd.isna(media_margem_ebitda):
+            h.metric(label=f'Margem de lucro líquido', value=f' - ', border=True)
+        else:
+            h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)        
 
         roic_medio = round(100*variavel_media(empresa_escolhida,'ROIC',inicio,fim),2)
         eva_medio = round(variavel_media(empresa_escolhida,'EVA',inicio,fim)/1E9,2)
@@ -486,8 +516,12 @@ def main():
         
 
         st.plotly_chart(fig_roic)
-        st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f'US${eva_medio}', border=True)
-
+        
+        if (pd.isna(eva_medio) or agg_revenue == 0):
+            st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f' - ', border=True)
+        else:
+            st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f'US${eva_medio}', border=True)   
+        
 if __name__ == "__main__":
     main()
 
