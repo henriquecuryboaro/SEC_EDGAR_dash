@@ -31,8 +31,10 @@ pip install -r requirements.txt
 
 O conteúdo do painel é exibido em uma página única, com a visualização dos dados ocorrendo em dois blocos:
 
-* **Indicadores acumulados**: 
-* **Margens**:
+* **Indicadores acumulados**: somatório de resultados financeiros disponíveis para a companhia selecionada dentro do período analisado
+* **Margens**: valores médios de indicadores financeiros dentro do período analisado
+
+Além disso, é possível visualizar a evolução temporal dos indicadores financeiros (tanto absolutos quanto margens) ao longo do período disponível para análise, em gráfico.
 
 ### Imagens
 
