@@ -3,6 +3,6 @@ pandas
 plotly
 streamlit>=1.31.0
 altair
-pyarrow
 openpyxl
 numpy
+yfinance
