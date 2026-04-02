@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import date
-import time
+import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -102,6 +102,21 @@ current_liabilities_tags = [
     'LiabilitiesCurrent',
     'CurrentLiabilities'
 ]
+
+#chamada de dados pela biblioteca yfinance
+commodities = ['CL=F','BZ=F','RB=F','NG=F','HO=F']
+data_commodities = yf.download("CL=F RB=F BZ=F NG=F HO=F", start="2008-01-01", end="2026-03-01")
+fechamentos = data_commodities['Close']
+fechamentos = fechamentos.reset_index()
+fechamentos['ano'] = fechamentos['Date'].dt.year
+fechamentos_medias = fechamentos.groupby(['ano'], as_index=False).agg(['min','max'])
+fechamentos_medias.columns = [f'{col[0]}_{col[1]}' for col in fechamentos_medias.columns]
+
+for arg in commodities:
+    min,max = f'{arg}_min',f'{arg}_max'
+    fechamentos_medias[f'{arg}_diff'] = ((fechamentos_medias[max] - fechamentos_medias[min])/fechamentos_medias[min])
+
+fechamentos_medias = fechamentos_medias.rename(columns={'ano_':'year'})
 
 def fetch_cik_data(cik, headers):
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -392,7 +407,8 @@ df_atributo_unificado[numeric_features] = df_atributo_unificado[numeric_features
 #geração de lista de empresas
 companies_list = df_atributo_unificado['entity'].unique().tolist()
 
-
+df_atributo_unificado = df_atributo_unificado.merge(fechamentos_medias,on='year')
+print(df_atributo_unificado)
 
 def main():
 
