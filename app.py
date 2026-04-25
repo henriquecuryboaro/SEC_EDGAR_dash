@@ -7,6 +7,7 @@ from datetime import date
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
+import gc
 
 ## Título da página,layout
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
@@ -103,7 +104,28 @@ current_liabilities_tags = [
     'CurrentLiabilities'
 ]
 
+ALL_TAGS = set(
+    revenue_tags + net_income_tags + inventory_tags +
+    operating_tags + deprec_tags + profit_tags +
+    cogs_tags + interest_tags + tax_tags +
+    opex_tags + sga_tags + rd_tags + ooe_tags +
+    incometax_tags + pretax_tags + short_term_tags +
+    long_term_tags + equity_tags + cash_tags +
+    assets_tags + current_liabilities_tags
+)
+
 #chamada de dados pela biblioteca yfinance
+commodities_dict = { 'CL=F': {'nome': 'Petróleo bruto West Texas Intermediate',
+                              'unidade':'US$/barril'},
+                     'BZ=F': {'nome': 'Petróleo brent',
+                              'unidade':'US$/barril'},
+                     'RB=F': {'nome': 'Gasolina',
+                              'unidade':'US$/galão'},
+                     'NG=F': {'nome': 'Gás natural',
+                              'unidade':'US$/MMBTu'},
+                     'HO=F': {'nome': 'Óleo diesel',
+                              'unidade':'US$/galão'}
+
 commodities = ['CL=F','BZ=F','RB=F','NG=F','HO=F']
 data_commodities = yf.download("CL=F RB=F BZ=F NG=F HO=F", start="2008-01-01", end="2026-03-01")
 fechamentos = data_commodities['Close']
@@ -123,11 +145,14 @@ def fetch_cik_data(cik, headers):
     try:
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
-        return cik, {"entityName": response.json().get("entityName"),
-                    "facts": {
-                        "us-gaap": response.json().get("facts", {}).get("us-gaap", {})
-                    }
-                    }
+        data = response.json()  # ← desserializa UMA única vez
+        us_gaap_full = data.get("facts", {}).get("us-gaap", {})
+        return cik, {
+            "entityName": data.get("entityName"),
+            "facts": {
+                "us-gaap": {k: v for k, v in us_gaap_full.items() if k in ALL_TAGS}
+            }
+        }
     except Exception as e:
         return cik, None
 
@@ -337,97 +362,136 @@ metricas = {
 
 }
 
-for atributo,tags in metricas.items():
-    df = data_consolidada(atributo,tags)
-    dfs_atributos_consolidados.append(df)
 
-df_atributo_unificado = (
-    pd.concat(
-        [df.set_index(['entity','year']) for df in dfs_atributos_consolidados],
-        axis=1
-    )
-    .reset_index()
-)
 
-df_atributo_unificado = df_atributo_unificado.astype({
-    col: 'float32'
-    for col in df_atributo_unificado.select_dtypes('float').columns
-})
+@st.cache_data(ttl=86400) # Cache de 24h
+def carregar_dados_consolidados():
+    caminho_parquet = 'df_atributo_unificado.parquet'
+    
+    # Tenta ler o arquivo se ele já existir no repositório/ambiente
+    try:
+        colunas=['entity', 'year', 'Revenue', 'OperatingIncome', 'NetIncome',
+       'DepreciationAmortization', 'GrossProfit', 'COGS', 'Interest', 'Taxes',
+       'Inventory', 'Opex', 'RnD', 'IncomeTax', 'ShortTermDebt',
+       'LongTermDebt', 'Equity', 'Cash', 'Assets', 'CurrentLiabilities',
+       'CalcProfit', 'EBITDA', 'PreTax', 'TaxRate', 'NOPAT', 'ROIC', 'E_D',
+       'Cost_of_Equity', 'Rd', 'WACC', 'EVA', 'EBITDAMargin', 'GrossMargin',
+       'NetIncomeMargin', 'OperatingIncomeMargin']
+        df = pd.read_parquet(caminho_parquet,columns=colunas,memory_map=True)
 
-#criação de colunas com métricas calculadas indiretamente
-df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
-df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
-df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
-df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
-df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
-df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+        df['entity'] = df['entity'].astype('category')
 
-#Criação de atribuitos e tratativa de NaN para calcular WACC e EVA
-df_atributo_unificado['E_D'] = (df_atributo_unificado['Equity']/(df_atributo_unificado['ShortTermDebt']+df_atributo_unificado['LongTermDebt']+df_atributo_unificado['Equity']))
-weight_equity = df_atributo_unificado['E_D'].median()
-df_atributo_unificado['E_D'] = df_atributo_unificado['E_D'].where(
-    df_atributo_unificado['E_D'] > 0,
-    weight_equity
-)
+        return df
+    except Exception:
+        # Se não encontrar o arquivo, executa sua lógica original de processamento
+        dfs_atributos_consolidados = []
+        for atributo, tags in metricas.items():
+            df = data_consolidada(atributo, tags)
+            dfs_atributos_consolidados.append(df)
 
-df_atributo_unificado['Cost_of_Equity'] = 0.08
-df_atributo_unificado['Rd'] = df_atributo_unificado['Interest']/(df_atributo_unificado['ShortTermDebt'] + df_atributo_unificado['LongTermDebt'])
-df_atributo_unificado['Rd'] = df_atributo_unificado['Rd'].where(
-    df_atributo_unificado['Rd'] > 0,
-    0.05
-)
+        df_atributo_unificado = pd.concat([df.set_index(['entity','year']) for df in dfs_atributos_consolidados], axis=1).reset_index()
 
-df_atributo_unificado['TaxRate'] = df_atributo_unificado['TaxRate'].where(
-    ((df_atributo_unificado['TaxRate'] >= 0) & (df_atributo_unificado['TaxRate'] < 1)),
-    0.25
-)
 
-df_atributo_unificado['WACC'] = df_atributo_unificado['E_D']*df_atributo_unificado['Cost_of_Equity'] + df_atributo_unificado['E_D']*df_atributo_unificado['Rd']*(1 - df_atributo_unificado['TaxRate'])
-df_atributo_unificado['EVA'] = (df_atributo_unificado['ROIC'] - df_atributo_unificado['WACC'])*(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+        df_atributo_unificado = df_atributo_unificado.astype({
+            col: 'float32'
+            for col in df_atributo_unificado.select_dtypes('float').columns
+        })
 
-#Criação de colunas com margens
-df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
+        #criação de colunas com métricas calculadas indiretamente
+        df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
+        df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
+        df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
+        df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
+        df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
+        df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
 
-df_atributo_unificado['GrossMargin'] = round(100*(
-    df_atributo_unificado['GrossProfit']
-        .combine_first(df_atributo_unificado['CalcProfit'])
-        .div(df_atributo_unificado['Revenue'])
-),2)
-df_atributo_unificado['NetIncomeMargin'] = round(100*(df_atributo_unificado['NetIncome']/df_atributo_unificado['Revenue']),2)
-df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificado['OperatingIncome']/df_atributo_unificado['Revenue']),2)
+        #Criação de atribuitos e tratativa de NaN para calcular WACC e EVA
+        df_atributo_unificado['E_D'] = (df_atributo_unificado['Equity']/(df_atributo_unificado['ShortTermDebt']+df_atributo_unificado['LongTermDebt']+df_atributo_unificado['Equity']))
+        weight_equity = df_atributo_unificado['E_D'].median()
+        df_atributo_unificado['E_D'] = df_atributo_unificado['E_D'].where(
+            df_atributo_unificado['E_D'] > 0,
+            weight_equity
+        )
 
-#formatação dos dados e DataFrame
-df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
-df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
+        df_atributo_unificado['Cost_of_Equity'] = 0.08
+        df_atributo_unificado['Rd'] = df_atributo_unificado['Interest']/(df_atributo_unificado['ShortTermDebt'] + df_atributo_unificado['LongTermDebt'])
+        df_atributo_unificado['Rd'] = df_atributo_unificado['Rd'].where(
+            df_atributo_unificado['Rd'] > 0,
+            0.05
+        )
 
-num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
-numeric_features = num_cols.tolist()
-df_atributo_unificado[numeric_features] = df_atributo_unificado[numeric_features].astype('float64')
+        df_atributo_unificado['TaxRate'] = df_atributo_unificado['TaxRate'].where(
+            ((df_atributo_unificado['TaxRate'] >= 0) & (df_atributo_unificado['TaxRate'] < 1)),
+            0.25
+        )
+
+        df_atributo_unificado['WACC'] = df_atributo_unificado['E_D']*df_atributo_unificado['Cost_of_Equity'] + df_atributo_unificado['E_D']*df_atributo_unificado['Rd']*(1 - df_atributo_unificado['TaxRate'])
+        df_atributo_unificado['EVA'] = (df_atributo_unificado['ROIC'] - df_atributo_unificado['WACC'])*(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+
+        #Criação de colunas com margens
+        df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
+
+        df_atributo_unificado['GrossMargin'] = round(100*(
+            df_atributo_unificado['GrossProfit']
+                .combine_first(df_atributo_unificado['CalcProfit'])
+                .div(df_atributo_unificado['Revenue'])
+        ),2)
+        df_atributo_unificado['NetIncomeMargin'] = round(100*(df_atributo_unificado['NetIncome']/df_atributo_unificado['Revenue']),2)
+        df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificado['OperatingIncome']/df_atributo_unificado['Revenue']),2)
+
+        #formatação dos dados e DataFrame
+        df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
+        df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
+
+        num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
+        num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
+        numeric_features = num_cols.tolist()
+        df_atributo_unificado[numeric_features] = df_atributo_unificado[numeric_features].astype('float64')
+
+        # Salva o resultado para evitar reprocessamento na próxima chamada do cache
+        df_atributo_unificado.to_parquet(caminho_parquet, engine='pyarrow', compression='snappy', index=False)
+        return df_atributo_unificado
+
+df_atributo_unificado = carregar_dados_consolidados()
+gc.collect()
 
 #geração de lista de empresas
 companies_list = df_atributo_unificado['entity'].unique().tolist()
 
-df_atributo_unificado = df_atributo_unificado.merge(fechamentos_medias,on='year')
-print(df_atributo_unificado)
+def fmt(valor, divisor=1E9, casas=2):
+    return round(float(valor) / divisor, casas)
 
 def main():
 
     st.write('## Painel de informações financeiras de empresas listadas nos EUA')
     st.write('### Selecione dados no menu de navegação à esquerda. Caso nenhum valor seja exibido, isso significa que não há dados disponíveis para os filtros aplicados')
     st.write('#### Fonte dos dados: Securities and Exchange Commission - SEC') 
+    
     empresa_escolhida = st.sidebar.selectbox('Escolha a empresa',sorted(companies_list), index=None, placeholder='Empresas', key=f'empresa')
-    inicio = st.sidebar.selectbox('### Início da série', list(range(2008,2026)))
-    fim = st.sidebar.selectbox('### Fim da série', list(range(2008,2026)))
-    agg_revenue = round(variavel_agreg_periodo(empresa_escolhida,'Revenue',inicio,fim)/1E9,2)
-    agg_GrossProfit = round(variavel_agreg_periodo(empresa_escolhida,'CalcProfit',inicio,fim)/1E9,2)
-    agg_OpIncome = round(variavel_agreg_periodo(empresa_escolhida,'OperatingIncome',inicio,fim)/1E9,2)
-    agg_EBITDA = round(variavel_agreg_periodo(empresa_escolhida,'EBITDA',inicio,fim)/1E9,2)
-    agg_NetIncome = round(variavel_agreg_periodo(empresa_escolhida,'NetIncome',inicio,fim)/1E9,2)
+    inicio = st.sidebar.selectbox('Início da série', list(range(2008,2026)))
+    fim = st.sidebar.selectbox('Fim da série', list(range(2008,2026)))
 
-    media_margem_lucrobruto = round(variavel_media(empresa_escolhida,'GrossMargin',inicio,fim),2)
-    media_margem_operacional = round(variavel_media(empresa_escolhida,'OperatingIncomeMargin',inicio,fim),2)
-    media_margem_ebitda = round(variavel_media(empresa_escolhida,'EBITDAMargin',inicio,fim),2)
-    media_margem_lucroliquido = round(variavel_media(empresa_escolhida,'NetIncomeMargin',inicio,fim),2)
+    agg_revenue      = fmt(variavel_agreg_periodo(empresa_escolhida, 'Revenue', inicio, fim))
+    agg_GrossProfit  = fmt(variavel_agreg_periodo(empresa_escolhida, 'CalcProfit', inicio, fim))
+    agg_OpIncome     = fmt(variavel_agreg_periodo(empresa_escolhida, 'OperatingIncome', inicio, fim))
+    agg_EBITDA       = fmt(variavel_agreg_periodo(empresa_escolhida, 'EBITDA', inicio, fim))
+    agg_NetIncome    = fmt(variavel_agreg_periodo(empresa_escolhida, 'NetIncome', inicio, fim))
+
+    media_margem_lucrobruto    = fmt(variavel_media(empresa_escolhida, 'GrossMargin', inicio, fim), divisor=1)
+    media_margem_operacional   = fmt(variavel_media(empresa_escolhida, 'OperatingIncomeMargin', inicio, fim), divisor=1)
+    media_margem_ebitda        = fmt(variavel_media(empresa_escolhida, 'EBITDAMargin', inicio, fim), divisor=1)
+    media_margem_lucroliquido  = fmt(variavel_media(empresa_escolhida, 'NetIncomeMargin', inicio, fim), divisor=1)
+
+#    agg_revenue = round(variavel_agreg_periodo(empresa_escolhida,'Revenue',inicio,fim)/1E9,2)
+#    agg_GrossProfit = round(variavel_agreg_periodo(empresa_escolhida,'CalcProfit',inicio,fim)/1E9,2)
+#    agg_OpIncome = round(variavel_agreg_periodo(empresa_escolhida,'OperatingIncome',inicio,fim)/1E9,2)
+#    agg_EBITDA = round(variavel_agreg_periodo(empresa_escolhida,'EBITDA',inicio,fim)/1E9,2)
+#    agg_NetIncome = round(variavel_agreg_periodo(empresa_escolhida,'NetIncome',inicio,fim)/1E9,2)
+
+#    media_margem_lucrobruto = round(variavel_media(empresa_escolhida,'GrossMargin',inicio,fim),2)#
+#    media_margem_operacional = round(variavel_media(empresa_escolhida,'OperatingIncomeMargin',inicio,fim),2)
+#    media_margem_ebitda = round(variavel_media(empresa_escolhida,'EBITDAMargin',inicio,fim),2)
+#    media_margem_lucroliquido = round(variavel_media(empresa_escolhida,'NetIncomeMargin',inicio,fim),2)
 
     col1,col2 = st.columns(2)
     with col1.container(border=True):
