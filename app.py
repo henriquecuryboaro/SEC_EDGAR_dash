@@ -125,6 +125,7 @@ commodities_dict = { 'CL=F': {'nome': 'Petróleo bruto West Texas Intermediate',
                               'unidade':'US$/MMBTu'},
                      'HO=F': {'nome': 'Óleo diesel',
                               'unidade':'US$/galão'}
+                   }
 
 commodities = ['CL=F','BZ=F','RB=F','NG=F','HO=F']
 data_commodities = yf.download("CL=F RB=F BZ=F NG=F HO=F", start="2008-01-01", end="2026-03-01")
