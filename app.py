@@ -13,10 +13,11 @@ import gc
 st.set_page_config(page_title="Indicadores financeiros de empresas pela SEC",layout="wide")
 
 CIK_list = ["0000080424","0001666700","0001751788","0000310158","0000034088",
-            "0000078003","0000037996","0001467858","0000068505",
+            "0000078003","0000037996","0001467858","0000068505","0001141391",
             "0000018230","0000030625","0000104169","0001048911","0000200406",
             "0001637459","0000315189","0000040545","0000012927","0000051143",
-            "0001571996","0000789019","0001318605"]
+            "0001571996","0000789019","0001318605","0000077476","0000320187",
+            "0000317540","0001018724"]
 
 #listas de nomes alternativos que alguns conceitos contábeis podem assumir
 revenue_tags = [
@@ -137,7 +138,7 @@ fechamentos_medias.columns = [f'{col[0]}_{col[1]}' for col in fechamentos_medias
 
 for arg in commodities:
     min,max = f'{arg}_min',f'{arg}_max'
-    fechamentos_medias[f'{arg}_diff'] = ((fechamentos_medias[max] - fechamentos_medias[min])/fechamentos_medias[min])
+    fechamentos_medias[f'{arg}_diff'] = 100*((fechamentos_medias[max] - fechamentos_medias[min])/fechamentos_medias[min])
 
 fechamentos_medias = fechamentos_medias.rename(columns={'ano_':'year'})
 
@@ -200,9 +201,7 @@ def df_completo(demonstracao, metric_name, entity_name):
     if "start" in df.columns:
 
         df["start"] = pd.to_datetime(df["start"])
-
         df["interval"] = (df["end"] - df["start"]).dt.days
-
         df = df[df["interval"] > 300]
 
     df["entity"] = entity_name
@@ -363,98 +362,76 @@ metricas = {
 
 }
 
+for atributo,tags in metricas.items():
+    df = data_consolidada(atributo,tags)
+    dfs_atributos_consolidados.append(df)
 
+df_atributo_unificado = (
+    pd.concat(
+        [df.set_index(['entity','year']) for df in dfs_atributos_consolidados],
+        axis=1
+    )
+    .reset_index()
+)
 
-@st.cache_data(ttl=86400) # Cache de 24h
-def carregar_dados_consolidados():
-    caminho_parquet = 'df_atributo_unificado.parquet'
-    
-    # Tenta ler o arquivo se ele já existir no repositório/ambiente
-    try:
-        colunas=['entity', 'year', 'Revenue', 'OperatingIncome', 'NetIncome',
-       'DepreciationAmortization', 'GrossProfit', 'COGS', 'Interest', 'Taxes',
-       'Inventory', 'Opex', 'RnD', 'IncomeTax', 'ShortTermDebt',
-       'LongTermDebt', 'Equity', 'Cash', 'Assets', 'CurrentLiabilities',
-       'CalcProfit', 'EBITDA', 'PreTax', 'TaxRate', 'NOPAT', 'ROIC', 'E_D',
-       'Cost_of_Equity', 'Rd', 'WACC', 'EVA', 'EBITDAMargin', 'GrossMargin',
-       'NetIncomeMargin', 'OperatingIncomeMargin']
-        df = pd.read_parquet(caminho_parquet,columns=colunas,memory_map=True)
+df_atributo_unificado = df_atributo_unificado.astype({
+    col: 'float32'
+    for col in df_atributo_unificado.select_dtypes('float').columns
+})
 
-        df['entity'] = df['entity'].astype('category')
+#criação de colunas com métricas calculadas indiretamente
+df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
+df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
+df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
+df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
+df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
+df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
 
-        return df
-    except Exception:
-        # Se não encontrar o arquivo, executa sua lógica original de processamento
-        dfs_atributos_consolidados = []
-        for atributo, tags in metricas.items():
-            df = data_consolidada(atributo, tags)
-            dfs_atributos_consolidados.append(df)
+#Criação de atribuitos e tratativa de NaN para calcular WACC e EVA
+df_atributo_unificado['E_D'] = (df_atributo_unificado['Equity']/(df_atributo_unificado['ShortTermDebt']+df_atributo_unificado['LongTermDebt']+df_atributo_unificado['Equity']))
+weight_equity = df_atributo_unificado['E_D'].median()
+df_atributo_unificado['E_D'] = df_atributo_unificado['E_D'].where(
+    df_atributo_unificado['E_D'] > 0,
+    weight_equity
+)
 
-        df_atributo_unificado = pd.concat([df.set_index(['entity','year']) for df in dfs_atributos_consolidados], axis=1).reset_index()
+df_atributo_unificado['Cost_of_Equity'] = 0.08
+df_atributo_unificado['Rd'] = df_atributo_unificado['Interest']/(df_atributo_unificado['ShortTermDebt'] + df_atributo_unificado['LongTermDebt'])
+df_atributo_unificado['Rd'] = df_atributo_unificado['Rd'].where(
+    df_atributo_unificado['Rd'] > 0,
+    0.05
+)
 
+df_atributo_unificado['TaxRate'] = df_atributo_unificado['TaxRate'].where(
+    ((df_atributo_unificado['TaxRate'] >= 0) & (df_atributo_unificado['TaxRate'] < 1)),
+    0.25
+)
 
-        df_atributo_unificado = df_atributo_unificado.astype({
-            col: 'float32'
-            for col in df_atributo_unificado.select_dtypes('float').columns
-        })
+df_atributo_unificado['WACC'] = df_atributo_unificado['E_D']*df_atributo_unificado['Cost_of_Equity'] + df_atributo_unificado['E_D']*df_atributo_unificado['Rd']*(1 - df_atributo_unificado['TaxRate'])
+df_atributo_unificado['EVA'] = (df_atributo_unificado['ROIC'] - df_atributo_unificado['WACC'])*(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
 
-        #criação de colunas com métricas calculadas indiretamente
-        df_atributo_unificado['CalcProfit'] = round((df_atributo_unificado['Revenue'] - df_atributo_unificado['COGS']),2)
-        df_atributo_unificado['EBITDA'] = round((df_atributo_unificado['NetIncome'].fillna(0)+df_atributo_unificado['Interest'].fillna(0)+df_atributo_unificado['Taxes'].fillna(0)+df_atributo_unificado['DepreciationAmortization'].fillna(0)),2)
-        df_atributo_unificado['PreTax'] = df_atributo_unificado['NetIncome'] + abs(df_atributo_unificado['IncomeTax'])
-        df_atributo_unificado['TaxRate'] = (abs(df_atributo_unificado['IncomeTax']))/df_atributo_unificado['PreTax']
-        df_atributo_unificado['NOPAT'] = df_atributo_unificado['OperatingIncome']*(1 - df_atributo_unificado['TaxRate'])
-        df_atributo_unificado['ROIC'] = df_atributo_unificado['NOPAT']/(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+#Criação de colunas com margens
+df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
 
-        #Criação de atribuitos e tratativa de NaN para calcular WACC e EVA
-        df_atributo_unificado['E_D'] = (df_atributo_unificado['Equity']/(df_atributo_unificado['ShortTermDebt']+df_atributo_unificado['LongTermDebt']+df_atributo_unificado['Equity']))
-        weight_equity = df_atributo_unificado['E_D'].median()
-        df_atributo_unificado['E_D'] = df_atributo_unificado['E_D'].where(
-            df_atributo_unificado['E_D'] > 0,
-            weight_equity
-        )
+df_atributo_unificado['GrossMargin'] = round(100*(
+    df_atributo_unificado['GrossProfit']
+        .combine_first(df_atributo_unificado['CalcProfit'])
+        .div(df_atributo_unificado['Revenue'])
+),2)
+df_atributo_unificado['NetIncomeMargin'] = round(100*(df_atributo_unificado['NetIncome']/df_atributo_unificado['Revenue']),2)
+df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificado['OperatingIncome']/df_atributo_unificado['Revenue']),2)
 
-        df_atributo_unificado['Cost_of_Equity'] = 0.08
-        df_atributo_unificado['Rd'] = df_atributo_unificado['Interest']/(df_atributo_unificado['ShortTermDebt'] + df_atributo_unificado['LongTermDebt'])
-        df_atributo_unificado['Rd'] = df_atributo_unificado['Rd'].where(
-            df_atributo_unificado['Rd'] > 0,
-            0.05
-        )
+#formatação dos dados e DataFrame
+df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
+df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
 
-        df_atributo_unificado['TaxRate'] = df_atributo_unificado['TaxRate'].where(
-            ((df_atributo_unificado['TaxRate'] >= 0) & (df_atributo_unificado['TaxRate'] < 1)),
-            0.25
-        )
+num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
+numeric_features = num_cols.tolist()
 
-        df_atributo_unificado['WACC'] = df_atributo_unificado['E_D']*df_atributo_unificado['Cost_of_Equity'] + df_atributo_unificado['E_D']*df_atributo_unificado['Rd']*(1 - df_atributo_unificado['TaxRate'])
-        df_atributo_unificado['EVA'] = (df_atributo_unificado['ROIC'] - df_atributo_unificado['WACC'])*(df_atributo_unificado['Assets'] - df_atributo_unificado['Cash'] - df_atributo_unificado['CurrentLiabilities'])
+#geração de lista de empresas
+companies_list = df_atributo_unificado['entity'].unique().tolist()
 
-        #Criação de colunas com margens
-        df_atributo_unificado['EBITDAMargin'] = round(100*(df_atributo_unificado['EBITDA']/df_atributo_unificado['Revenue']),2)
-
-        df_atributo_unificado['GrossMargin'] = round(100*(
-            df_atributo_unificado['GrossProfit']
-                .combine_first(df_atributo_unificado['CalcProfit'])
-                .div(df_atributo_unificado['Revenue'])
-        ),2)
-        df_atributo_unificado['NetIncomeMargin'] = round(100*(df_atributo_unificado['NetIncome']/df_atributo_unificado['Revenue']),2)
-        df_atributo_unificado['OperatingIncomeMargin'] = round(100*(df_atributo_unificado['OperatingIncome']/df_atributo_unificado['Revenue']),2)
-
-        #formatação dos dados e DataFrame
-        df_atributo_unificado = df_atributo_unificado.sort_values(by=['entity','year'])
-        df_atributo_unificado['entity'] = df_atributo_unificado['entity'].str.title()
-
-        num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
-        num_cols = df_atributo_unificado.select_dtypes(include = ['number']).columns
-        numeric_features = num_cols.tolist()
-        df_atributo_unificado[numeric_features] = df_atributo_unificado[numeric_features].astype('float64')
-
-        # Salva o resultado para evitar reprocessamento na próxima chamada do cache
-        df_atributo_unificado.to_parquet(caminho_parquet, engine='pyarrow', compression='snappy', index=False)
-        return df_atributo_unificado
-
-df_atributo_unificado = carregar_dados_consolidados()
-gc.collect()
+# gc.collect()
 
 #geração de lista de empresas
 companies_list = df_atributo_unificado['entity'].unique().tolist()
@@ -466,8 +443,10 @@ def main():
 
     st.write('## Painel de informações financeiras de empresas listadas nos EUA')
     st.write('### Selecione dados no menu de navegação à esquerda. Caso nenhum valor seja exibido, isso significa que não há dados disponíveis para os filtros aplicados')
-    st.write('#### Fonte dos dados: Securities and Exchange Commission - SEC') 
+    st.write('#### Fonte dos dados: Securities and Exchange Commission (SEC) e Yahoo Finance') 
     
+    tab1,tab2 = st.tabs(['Indicadores financeiros de companhias','Mercado de commodities'])
+
     empresa_escolhida = st.sidebar.selectbox('Escolha a empresa',sorted(companies_list), index=None, placeholder='Empresas', key=f'empresa')
     inicio = st.sidebar.selectbox('Início da série', list(range(2008,2026)))
     fim = st.sidebar.selectbox('Fim da série', list(range(2008,2026)))
@@ -483,125 +462,210 @@ def main():
     media_margem_ebitda        = fmt(variavel_media(empresa_escolhida, 'EBITDAMargin', inicio, fim), divisor=1)
     media_margem_lucroliquido  = fmt(variavel_media(empresa_escolhida, 'NetIncomeMargin', inicio, fim), divisor=1)
 
-#    agg_revenue = round(variavel_agreg_periodo(empresa_escolhida,'Revenue',inicio,fim)/1E9,2)
-#    agg_GrossProfit = round(variavel_agreg_periodo(empresa_escolhida,'CalcProfit',inicio,fim)/1E9,2)
-#    agg_OpIncome = round(variavel_agreg_periodo(empresa_escolhida,'OperatingIncome',inicio,fim)/1E9,2)
-#    agg_EBITDA = round(variavel_agreg_periodo(empresa_escolhida,'EBITDA',inicio,fim)/1E9,2)
-#    agg_NetIncome = round(variavel_agreg_periodo(empresa_escolhida,'NetIncome',inicio,fim)/1E9,2)
 
-#    media_margem_lucrobruto = round(variavel_media(empresa_escolhida,'GrossMargin',inicio,fim),2)#
-#    media_margem_operacional = round(variavel_media(empresa_escolhida,'OperatingIncomeMargin',inicio,fim),2)
-#    media_margem_ebitda = round(variavel_media(empresa_escolhida,'EBITDAMargin',inicio,fim),2)
-#    media_margem_lucroliquido = round(variavel_media(empresa_escolhida,'NetIncomeMargin',inicio,fim),2)
+    with tab1:
 
-    col1,col2 = st.columns(2)
-    with col1.container(border=True):
+        col1,col2 = st.columns(2)
+        with col1.container(border=True):
 
-        st.markdown(
-            """
-            <style>
-            .centered-text {
-                text-align: center;
-                font-size: 28px;
-            }
-            </style>
-            <div class="centered-text">
-                Indicadores acumulados<br>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+            st.markdown(
+                """
+                <style>
+                .centered-text {
+                    text-align: center;
+                    font-size: 28px;
+                }
+                </style>
+                <div class="centered-text">
+                    Indicadores acumulados<br>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 
-        a,b = st.columns(2)
-        c,d = st.columns(2)
-        if (pd.isna(agg_revenue) or agg_revenue == 0):
-            a.metric(label=f'Receita (em bilhões)', value=f' - ', border=True)
-        else:
-            a.metric(label=f'Receita (em bilhões)', value=f'US${agg_revenue}', border=True)
-        if (pd.isna(agg_GrossProfit) or agg_revenue == 0):
-            b.metric(label=f'Lucro bruto (em bilhões)', value=f' - ', border=True)
-        else:
-            b.metric(label=f'Lucro bruto (em bilhões)', value=f'US${agg_GrossProfit}', border=True)
-        if (pd.isna(agg_OpIncome) or agg_revenue == 0):
-            c.metric(label=f'Lucro operacional (em bilhões)', value=f' - ', border=True)
-        else:
-            c.metric(label=f'Lucro operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
-        if (pd.isna(agg_EBITDA) or agg_revenue == 0):
-            d.metric(label=f'EBITDA (em bilhões)', value=f' - ', border=True)
-        else:
-            d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
-        if (pd.isna(agg_NetIncome) or agg_revenue == 0):
-            st.metric(label=f'Lucro líquido (em bilhões)', value=f' - ', border=True)
-        else:
-            st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
+            a,b = st.columns(2)
+            c,d = st.columns(2)
+            if (pd.isna(agg_revenue) or agg_revenue == 0):
+                a.metric(label=f'Receita (em bilhões)', value=f' - ', border=True)
+            else:
+                a.metric(label=f'Receita (em bilhões)', value=f'US${agg_revenue}', border=True)
+            if (pd.isna(agg_GrossProfit) or agg_revenue == 0):
+                b.metric(label=f'Lucro bruto (em bilhões)', value=f' - ', border=True)
+            else:
+                b.metric(label=f'Lucro bruto (em bilhões)', value=f'US${agg_GrossProfit}', border=True)
+            if (pd.isna(agg_OpIncome) or agg_revenue == 0):
+                c.metric(label=f'Lucro operacional (em bilhões)', value=f' - ', border=True)
+            else:
+                c.metric(label=f'Lucro operacional (em bilhões)', value=f'US${agg_OpIncome}', border=True)
+            if (pd.isna(agg_EBITDA) or agg_revenue == 0):
+                d.metric(label=f'EBITDA (em bilhões)', value=f' - ', border=True)
+            else:
+                d.metric(label=f'EBITDA (em bilhões)', value=f'US${agg_EBITDA}', border=True)
+            if (pd.isna(agg_NetIncome) or agg_revenue == 0):
+                st.metric(label=f'Lucro líquido (em bilhões)', value=f' - ', border=True)
+            else:
+                st.metric(label=f'Lucro líquido (em bilhões)', value=f'US${agg_NetIncome}', border=True)
 
-        metric = st.selectbox('Métricas para séries temporais',sorted(metricas_pt.keys()), index=None, placeholder='Métricas', key=f'metrica')
-        try:
-            metrica_anual = metricas_pt[metric]
-            fig_receita = atributo_anual_plotbar(empresa_escolhida,metrica_anual,metric)
-            st.plotly_chart(fig_receita)
-        except:
-            pass
+            metric = st.selectbox('Métricas para séries temporais',sorted(metricas_pt.keys()), index=None, placeholder='Métricas', key=f'metrica')
+            try:
+                metrica_anual = metricas_pt[metric]
+                fig_receita = atributo_anual_plotbar(empresa_escolhida,metrica_anual,metric)
+                st.plotly_chart(fig_receita)
+            except:
+                pass
 
-    with col2.container(border=True):
-        st.markdown(
-            """
-            <style>
-            .centered-text {
-                text-align: center;
-                font-size: 28px;
-            }
-            </style>
-            <div class="centered-text">
-                Margens (valores médios para o período)<br>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        with col2.container(border=True):
+            st.markdown(
+                """
+                <style>
+                .centered-text {
+                    text-align: center;
+                    font-size: 28px;
+                }
+                </style>
+                <div class="centered-text">
+                    Margens (valores médios para o período)<br>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-        e,f = st.columns(2)
-        g,h = st.columns(2)
+            e,f = st.columns(2)
+            g,h = st.columns(2)
 
-        if pd.isna(media_margem_lucrobruto):
-            e.metric(label=f'Margem de lucro bruto', value=f' - ', border=True)
-        else:
-            e.metric(label=f'Margem de lucro bruto', value=f'{media_margem_lucrobruto}%', border=True)
-        if pd.isna(media_margem_operacional):
-            f.metric(label=f'Margem de lucro operacional', value=f' - ', border=True)
-        else:
-            f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
-        if pd.isna(media_margem_ebitda):
-            g.metric(label=f'Margem EBITDA', value=f' - ', border=True)
-        else:
-            g.metric(label=f'Margem EBITDA', value=f'{media_margem_ebitda}%', border=True)
-        if pd.isna(media_margem_ebitda):
-            h.metric(label=f'Margem de lucro líquido', value=f' - ', border=True)
-        else:
-            h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)        
+            if pd.isna(media_margem_lucrobruto):
+                e.metric(label=f'Margem de lucro bruto', value=f' - ', border=True)
+            else:
+                e.metric(label=f'Margem de lucro bruto', value=f'{media_margem_lucrobruto}%', border=True)
+            if pd.isna(media_margem_operacional):
+                f.metric(label=f'Margem de lucro operacional', value=f' - ', border=True)
+            else:
+                f.metric(label=f'Margem de lucro operacional', value=f'{media_margem_operacional}%', border=True)
+            if pd.isna(media_margem_ebitda):
+                g.metric(label=f'Margem EBITDA', value=f' - ', border=True)
+            else:
+                g.metric(label=f'Margem EBITDA', value=f'{media_margem_ebitda}%', border=True)
+            if pd.isna(media_margem_ebitda):
+                h.metric(label=f'Margem de lucro líquido', value=f' - ', border=True)
+            else:
+                h.metric(label=f'Margem de lucro líquido', value=f'{media_margem_lucroliquido}%', border=True)        
 
-        roic_medio = round(100*variavel_media(empresa_escolhida,'ROIC',inicio,fim),2)
-        eva_medio = round(variavel_media(empresa_escolhida,'EVA',inicio,fim)/1E9,2)
-        fig_roic = go.Figure(go.Indicator(
-                        mode = "gauge+number",
-                        value = roic_medio,
-                        gauge = {"axis": {"range":[0,100]}},
-                        title = {'text': "ROIC Médio (%)"}))
-                
-        fig_roic.update_layout(
-                        autosize=False,
-                        width=540, 
-                        height=360, 
-                        margin=dict(l=50, r=50, b=100, t=100, pad=4)
-                    )
-        
+            roic_medio = round(100*variavel_media(empresa_escolhida,'ROIC',inicio,fim),2)
+            eva_medio = round(variavel_media(empresa_escolhida,'EVA',inicio,fim)/1E9,2)
+            fig_roic = go.Figure(go.Indicator(
+                            mode = "gauge+number",
+                            value = roic_medio,
+                            gauge = {"axis": {"range":[0,100]}},
+                            title = {'text': "ROIC Médio (%)"}))
+                    
+            fig_roic.update_layout(
+                            autosize=False,
+                            width=540, 
+                            height=360, 
+                            margin=dict(l=50, r=50, b=100, t=100, pad=4)
+                        )
+            
 
-        st.plotly_chart(fig_roic)
-        
-        if (pd.isna(eva_medio) or agg_revenue == 0):
-            st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f' - ', border=True)
-        else:
-            st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f'US${eva_medio}', border=True)   
+            st.plotly_chart(fig_roic)
+            
+            if (pd.isna(eva_medio) or agg_revenue == 0):
+                st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f' - ', border=True)
+            else:
+                st.metric(label=f'Valor econômico adicionado (EVA) - Em bilhões', value=f'US${eva_medio}', border=True)
+
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1.container(border=True):
+            st.markdown(
+                """
+                <style>
+                .centered-text {
+                    text-align: center;
+                    font-size: 28px;
+                }
+                </style>
+                <div class="centered-text">
+                    Mercados de futuros de commodities relacionadas a consumo energético<br>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            keys_ordenadas = sorted(commodities_dict, key=lambda k: commodities_dict[k]['nome'])
+
+            commodity_key = st.selectbox(
+                label='Selecione uma commodity',
+                options=keys_ordenadas,
+                index=None,
+                placeholder='Commodities',
+                format_func=lambda k: commodities_dict[k]['nome']
+            )
+
+            try:
+                fig_comm = px.line(fechamentos_medias, x='year',y=f'{commodity_key}_diff', labels={'year':'Ano'})    
+                fig_comm.update_layout(yaxis=dict(title=commodities_dict[commodity_key]['unidade'], tickformat=",.2f",ticksuffix="%"), title_text=f'Variação observada nos valores de negociação da commodity por ano')
+                st.plotly_chart(fig_comm)
+            except:
+                st.info("Selecione dados no menu de navegação acima")
+
+        with col2.container(border=True):
+            st.markdown(
+                    """
+                    <style>
+                    .centered-text {
+                        text-align: center;
+                        font-size: 28px;
+                    }
+                    </style>
+                    <div class="centered-text">
+                        Evolução de receita e lucro de companhias<br>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            df_empresa = df_atributo_unificado[df_atributo_unificado['entity'] == empresa_escolhida]
+            
+            try:
+                fig_lucroreceita = go.Figure()
+
+                fig_lucroreceita.add_trace(go.Scatter(
+                    x=df_empresa['year'],
+                    y=df_empresa['NetIncome'],
+                    mode='lines',
+                    name='Lucro líquido'
+
+                ))
+
+                fig_lucroreceita.add_trace(go.Scatter(
+                    x=df_empresa['year'],
+                    y=df_empresa['GrossProfit'],
+                    mode='lines',
+                    name='Lucro bruto'
+
+                ))
+
+                fig_lucroreceita.add_trace(go.Scatter(
+                    x=df_empresa['year'],
+                    y=df_empresa['Revenue'],
+                    mode='lines',
+                    name='Receita'
+
+                ))
+
+                fig_lucroreceita.update_layout(
+                    title_text='Evolução temporal de lucro bruto, lucro líquido e receita',
+                    xaxis=dict(title='Ano'),
+                    yaxis=dict(title='Receita / Lucro líquido', tickformat=',.2f'),
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+                )
+
+                st.plotly_chart(fig_lucroreceita)
+            except:
+                st.info("Selecione empresa no menu lateral para visualizar dados")
+
+
         
 if __name__ == "__main__":
     main()
